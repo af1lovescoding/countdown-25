@@ -11,7 +11,7 @@ const spring = new Spring({
 
 const settings1 = createSpringSettings({
   frequency: 3.5,
-  halfLife: 0.05
+  halfLife: 1.05
 })
 const settings2 = createSpringSettings({
   frequency: .2,
