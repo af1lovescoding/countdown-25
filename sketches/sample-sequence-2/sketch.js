@@ -1,5 +1,5 @@
 import { createEngine } from "../_shared/engine.js"
-import { Spring } from "../_shared/spring.js"
+import { NoisyEllipseMask } from "../_shared/noisyEllipseMask.js"
 
 const { renderer, input, math, run, finish } = createEngine()
 const { ctx, canvas } = renderer
@@ -10,11 +10,24 @@ let dragStartY = null
 let wasDragging = false
 // Drag sensitivity: controls how much distance is needed to cycle through all frames
 const DRAG_SENSITIVITY = 2.8
+// Image scale: controls the size of all images (1.0 = original size, 0.5 = half size, 2.0 = double size)
+const IMAGE_SCALE = 1.5
 
-const spring = new Spring({
-  position: 0,
-  frequency: 1,
-  halfLife: 0.1
+// Mask closing variables
+let delayStarted = false
+let delayTimer = 0
+const DELAY_DURATION = 3.0 // 3 seconds delay after reaching final image
+let maskClosing = false
+
+// Create mask instance with configuration
+const mask = new NoisyEllipseMask(canvas, input, {
+  margin: 40,
+  ellipseVertices: 320,
+  noiseStrength: 50,
+  noiseSpeed: 2.0,
+  noiseDistance: 15.0,
+  springFrequency: 1,
+  springHalfLife: 0.1
 })
 
 // Load all images from the images folder
@@ -39,9 +52,8 @@ loadImages().then(() => {
 })
 
 function update(dt) {
-  // Clear canvas
-  ctx.fillStyle = "white"
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  // Update mask animation
+  mask.update(dt)
   
   // Get current Y position relative to canvas
   const canvasRect = canvas.getBoundingClientRect()
@@ -50,10 +62,14 @@ function update(dt) {
   
   // Handle drag start
   if (input.isDown()) {
-    // Just clicked - reset to frame 1 and start tracking drag
+    // Reset to frame 1 and start tracking drag
     dragStartY = mouseY
     wasDragging = false
     currentFrameIndex = 0 // Start at frame 1 when clicking
+    // Reset delay if user starts dragging again
+    delayStarted = false
+    delayTimer = 0
+    maskClosing = false
   }
   
   // Handle dragging
@@ -82,60 +98,56 @@ function update(dt) {
   if (input.isUp()) {
     dragStartY = null
     wasDragging = false
-    // Reset to frame 1 when releasing
-    currentFrameIndex = 0
+    // If we're at the last image, keep it to indicate end of sequence
+    // Otherwise reset to frame 1 when releasing
+    if (currentFrameIndex !== images.length - 1) {
+      currentFrameIndex = 0
+      // Reset delay if not at final image
+      delayStarted = false
+      delayTimer = 0
+      maskClosing = false
+    }
+  }
+  
+  // Check if we're at the final image (end state)
+  const isAtFinalImage = images.length > 0 && currentFrameIndex === images.length - 1
+  
+  // Start delay timer when we reach the final image
+  if (isAtFinalImage && !delayStarted && !maskClosing) {
+    delayStarted = true
+    delayTimer = 0
+  }
+  
+  // Update delay timer
+  if (delayStarted && !maskClosing) {
+    delayTimer += dt
+    // After delay duration, start closing the mask with animation
+    if (delayTimer >= DELAY_DURATION) {
+      maskClosing = true
+      mask.setExpanded(false) // Start closing animation
+    }
   }
 
-  spring.target = input.isPressed() ? canvas.width/2 : 0
-  spring.step(dt)
-
-  ctx.rect(0,0,canvas.width,canvas.height)
-  ctx.fillStyle = "black";
-  ctx.fill()
-
-  ctx.save()
-  {
-    // mask
-    ctx.beginPath()
-    const radius = spring.position
-    ctx.ellipse(canvas.width / 2, canvas.height / 2,radius,radius, 0, 0, Math.PI * 2)
-    // draw noisy ellipse with points and random noise
-    const points = []
-    const count = 32
-    for (let i = 0; i < count; i++) {
-      const angle = i * Math.PI * 2 / count
-      const r = radius + Math.random()*30
-      const x = r * Math.cos(angle)
-      const y = r * Math.sin(angle)
-      points.push({x,y})
-    }
-    ctx.save()
-    ctx.translate(canvas.width / 2, canvas.height / 2)
-    ctx.beginPath()
-    ctx.moveTo(points[0].x, points[0].y)
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y )
-    }
-    ctx.closePath()
-    ctx.stroke()
-    ctx.restore()
-    ctx.clip()
-
-    // mask content
-    ctx.rect(0,0,canvas.width,canvas.height)
-    ctx.fillStyle = "white";
-    ctx.fill()
-
+  // Apply mask and draw content inside
+  mask.applyMask(ctx, () => {
     // Draw the current frame centered
     if (images.length > 0 && images[currentFrameIndex]) {
       const img = images[currentFrameIndex]
-      const x = (canvas.width - img.width) / 2
-      const y = (canvas.height - img.height) / 2
-      ctx.drawImage(img, x, y)
+      const scaledWidth = img.width * IMAGE_SCALE
+      const scaledHeight = img.height * IMAGE_SCALE
+      const x = (canvas.width - scaledWidth) / 2
+      const y = (canvas.height - scaledHeight) / 2
+      ctx.drawImage(img, x, y, scaledWidth, scaledHeight)
+    }
+  })
+  
+  // Finish sequence when mask is fully closed (check mask spring position)
+  if (maskClosing) {
+    // Check if mask spring has reached 0 (fully closed)
+    const maskRadius = mask.spring.position
+    if (maskRadius <= 1) { // Use small threshold for floating point comparison
+      finish()
     }
   }
-
-  ctx.restore()
-  
 }
 

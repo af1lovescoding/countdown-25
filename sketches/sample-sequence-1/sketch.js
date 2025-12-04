@@ -1,11 +1,23 @@
 import { createEngine } from "../_shared/engine.js"
 import { Spring } from "../_shared/spring.js"
+import { NoisyEllipseMask } from "../_shared/noisyEllipseMask.js"
 import { Iris } from "./iris.js"
 import { EyeballMask } from "./eyeballMask.js"
 import { Rectangle } from "./rectangle.js"
 
 const { renderer, input, math, run, finish } = createEngine()
 const { ctx, canvas } = renderer
+
+// Create mask instance with configuration
+const mask = new NoisyEllipseMask(canvas, input, {
+  margin: 40,
+  ellipseVertices: 320,
+  noiseStrength: 50,
+  noiseSpeed: 2.0,
+  noiseDistance: 15.0,
+  springFrequency: 1,
+  springHalfLife: 0.1
+})
 
 let irises = []
 let eyeballMasks = []
@@ -309,9 +321,8 @@ function updateIrisPosition(iris, eyeballMask, mouseX, mouseY) {
 }
 
 function update(dt) {
-  // Clear canvas
-  ctx.fillStyle = "white"
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  // Update mask animation
+  mask.update(dt)
 
   // Get mouse position
   let mouseX = null
@@ -347,28 +358,31 @@ function update(dt) {
     }
   }
 
-  // Update and draw visible eyes only
-  for (let i = 0; i < visibleEyeCount && i < irises.length; i++) {
-    const iris = irises[i]
-    const eyeballMask = eyeballMasks[i]
-    
-    // Update iris position if mouse is available
-    if (mouseX !== null && mouseY !== null) {
-      updateIrisPosition(iris, eyeballMask, mouseX, mouseY)
+  // Apply mask and draw content inside
+  mask.applyMask(ctx, () => {
+    // Update and draw visible eyes only
+    for (let i = 0; i < visibleEyeCount && i < irises.length; i++) {
+      const iris = irises[i]
+      const eyeballMask = eyeballMasks[i]
+      
+      // Update iris position if mouse is available
+      if (mouseX !== null && mouseY !== null) {
+        updateIrisPosition(iris, eyeballMask, mouseX, mouseY)
+      }
+      
+      // Draw eye
+      ctx.save()
+      eyeballMask.createClipPath(ctx)
+      iris.draw(ctx)
+      ctx.restore()
+      eyeballMask.drawStroke(ctx)
     }
-    
-    // Draw eye
-    ctx.save()
-    eyeballMask.createClipPath(ctx)
-    iris.draw(ctx)
-    ctx.restore()
-    eyeballMask.drawStroke(ctx)
-  }
 
-  // Draw rectangle when last eye is clicked (draw on top)
-  if (rectangle && showRectangle) {
-    rectangle.draw(ctx)
-  }
+    // Draw rectangle when last eye is clicked (draw on top)
+    if (rectangle && showRectangle) {
+      rectangle.draw(ctx)
+    }
+  })
 }
 
 init()
