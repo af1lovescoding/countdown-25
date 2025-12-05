@@ -1,11 +1,10 @@
 import { createEngine } from "../_shared/engine.js"
-import { Spring } from "../_shared/spring.js"
 import { NoisyEllipseMask } from "../_shared/noisyEllipseMask.js"
 import { Iris } from "./iris.js"
 import { EyeballMask } from "./eyeballMask.js"
 import { Rectangle } from "./rectangle.js"
 
-const { renderer, input, math, run, finish } = createEngine()
+const { renderer, input, run, finish } = createEngine()
 const { ctx, canvas } = renderer
 
 // Create mask instance with configuration
@@ -21,14 +20,40 @@ const mask = new NoisyEllipseMask(canvas, input, {
 
 let irises = []
 let eyeballMasks = []
+let SleepingEyeBall = {
+  images: []
+}
+let animatedEyeBall = {
+  images: []
+}
+let closedMouth = {
+  images: []
+}
+let openedMouth = {
+  images: []
+}
 let rectangle = null
 const EYE_COUNT = 5
 const irisSize = 150
 const eyeballMaskSize = 200
+const animatedEyeBallScale = 1.30  // Scale factor for animatedEyeBall image
+const closedMouthScale = 0.5  // Scale factor for closed mouth image
+const openedMouthScale = 0.5  // Scale factor for opened mouth image
 let SEED = 6264  // Change this value to get different arrangements
 let visibleEyeCount = 1  // Start with only one eye visible
 let eyesClicked = new Set()  // Track which eyes have been clicked
+let eyesActivated = new Set()  // Track which eyes have been activated (switched from SVG to eyeballMask)
 let showRectangle = false  // Flag to show rectangle when last eye is clicked
+let showRedRectangle = false  // Flag to show red rectangle
+let rectangleClicked = false  // Track if rectangle has been clicked
+let redRectangleStartTime = null  // Time when red rectangle appeared
+
+// Mask closing variables
+let delayStarted = false
+let delayTimer = 0
+const DELAY_DURATION = 3.0 // 3 seconds delay after rectangle turns back to black
+let maskClosing = false
+let rectangleTurnedBlack = false  // Track when rectangle has turned back to black
 
 // Seeded random number generator
 function createSeededRandom(seed) {
@@ -37,94 +62,6 @@ function createSeededRandom(seed) {
     value = (value * 9301 + 49297) % 233280
     return value / 233280
   }
-}
-
-// Generate grid vertices and place eyes without overlap
-function generateEyePositions(canvasWidth, canvasHeight, eyeCount, minSpacing, eyeSize, rectangle = null, random = Math.random) {
-  // Create a dense grid of vertices
-  // Grid spacing should be smaller than minSpacing to allow random selection
-  const gridSpacing = minSpacing * 0.8 // Dense grid, 80% of min spacing
-  
-  // Calculate safe bounds: eyes must be at least eyeSize away from edges
-  const minX = eyeSize
-  const maxX = canvasWidth - eyeSize /2
-  const minY = eyeSize
-  const maxY = canvasHeight - eyeSize /2
-  
-  // Calculate grid dimensions within safe bounds
-  const availableWidth = maxX - minX
-  const availableHeight = maxY - minY
-  const cols = Math.ceil(availableWidth / gridSpacing)
-  const rows = Math.ceil(availableHeight / gridSpacing)
-  
-  // Calculate rectangle bounds if provided
-  let rectMinX = null, rectMaxX = null, rectMinY = null, rectMaxY = null
-  if (rectangle) {
-    rectMinX = rectangle.x - rectangle.width / 2 - eyeSize / 2 // Add eye radius padding
-    rectMaxX = rectangle.x + rectangle.width / 2 + eyeSize / 2
-    rectMinY = rectangle.y - rectangle.height / 2 - eyeSize / 2
-    rectMaxY = rectangle.y + rectangle.height / 2 + eyeSize / 2
-  }
-  
-  // Generate all grid points within safe bounds
-  const gridPoints = []
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const x = minX + col * gridSpacing + gridSpacing / 2 // Center in grid cell
-      const y = minY + row * gridSpacing + gridSpacing / 2
-      
-      // Make sure point is within safe bounds
-      if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-        // Check if point overlaps with rectangle (if rectangle exists)
-        let overlapsRectangle = false
-        if (rectangle && rectMinX !== null) {
-          if (x >= rectMinX && x <= rectMaxX && y >= rectMinY && y <= rectMaxY) {
-            overlapsRectangle = true
-          }
-        }
-        
-        if (!overlapsRectangle) {
-          gridPoints.push({ x, y })
-        }
-      }
-    }
-  }
-  
-  // Shuffle grid points randomly using seeded random
-  for (let i = gridPoints.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [gridPoints[i], gridPoints[j]] = [gridPoints[j], gridPoints[i]]
-  }
-  
-  // Select points ensuring no overlap
-  const selectedPositions = []
-  const minSpacingSquared = minSpacing * minSpacing
-  
-  for (const point of gridPoints) {
-    // Check if this point is far enough from all already selected points
-    let isValid = true
-    for (const selected of selectedPositions) {
-      const dx = point.x - selected.x
-      const dy = point.y - selected.y
-      const distanceSquared = dx * dx + dy * dy
-      
-      if (distanceSquared < minSpacingSquared) {
-        isValid = false
-        break
-      }
-    }
-    
-    if (isValid) {
-      selectedPositions.push(point)
-      
-      // Stop if we have enough positions
-      if (selectedPositions.length >= eyeCount) {
-        break
-      }
-    }
-  }
-  
-  return selectedPositions
 }
 
 // Generate eye positions in an arch above the rectangle (mouth) in the top half (0 to height/2)
@@ -203,7 +140,15 @@ async function createEyes(seed) {
   eyeballMasks = []
   visibleEyeCount = 1  // Reset to show only first eye
   eyesClicked.clear()  // Reset clicked tracking
+  eyesActivated.clear()  // Reset activated tracking
   showRectangle = false  // Reset rectangle visibility
+  showRedRectangle = false  // Reset red rectangle visibility
+  rectangleClicked = false  // Reset rectangle click tracking
+  redRectangleStartTime = null  // Reset timer
+  delayStarted = false  // Reset delay tracking
+  delayTimer = 0
+  maskClosing = false  // Reset mask closing state
+  rectangleTurnedBlack = false  // Reset rectangle state tracking
   
   // Create seeded random number generator
   const seededRandom = createSeededRandom(seed)
@@ -212,13 +157,16 @@ async function createEyes(seed) {
   if (!rectangle) {
     const rectWidth = canvas.width * 0.05	
     const rectHeight = canvas.height * 0.3
+    const rectX = canvas.width / 2
+    const rectY = canvas.height / 2
     rectangle = new Rectangle(
-      canvas.width / 2,
-      canvas.height / 2,
+      rectX,
+      rectY,
       rectWidth,
       rectHeight,
       "#000000"
     )
+    
   }
   
   // Generate eye positions around the rectangle
@@ -245,13 +193,97 @@ async function createEyes(seed) {
   ])
 }
 
-// Check if a point is inside an eye
-function isPointInEye(x, y, eyeballMask) {
-  const maskRadius = eyeballMask.getRadius()
-  const dx = x - eyeballMask.x
-  const dy = y - eyeballMask.y
+// Load SleepingEyeBall images
+async function loadSleepingEyeBall() {
+  // Load sleeping-1.png
+  const sleeping1Img = new Image()
+  const sleeping1Promise = new Promise((resolve, reject) => {
+    sleeping1Img.onload = () => {
+      console.log("Sleeping-1 loaded", sleeping1Img.width, sleeping1Img.height)
+      resolve()
+    }
+    sleeping1Img.onerror = (err) => {
+      console.error("Error loading sleeping-1", err)
+      reject(err)
+    }
+    sleeping1Img.src = "images/drawn/sleeping/sleeping-1.png"
+  })
+  SleepingEyeBall.images.push({ image: sleeping1Img, promise: sleeping1Promise })
+  await sleeping1Promise
+}
+
+// Load animatedEyeBall images
+async function loadAnimatedEyeBall() {
+  // Load eyeball-1.png
+  const eyeball1Img = new Image()
+  const eyeball1Promise = new Promise((resolve, reject) => {
+    eyeball1Img.onload = () => {
+      console.log("Eyeball-1 loaded", eyeball1Img.width, eyeball1Img.height)
+      resolve()
+    }
+    eyeball1Img.onerror = (err) => {
+      console.error("Error loading eyeball-1", err)
+      reject(err)
+    }
+    eyeball1Img.src = "images/drawn/eye-ball/eyeball-1.png"
+  })
+  animatedEyeBall.images.push({ image: eyeball1Img, promise: eyeball1Promise })
+  await eyeball1Promise
+}
+
+// Load closedMouth images
+async function loadClosedMouth() {
+  // Load closed-mouth.png
+  const closedMouthImg = new Image()
+  const closedMouthPromise = new Promise((resolve, reject) => {
+    closedMouthImg.onload = () => {
+      console.log("Closed-mouth loaded", closedMouthImg.width, closedMouthImg.height)
+      resolve()
+    }
+    closedMouthImg.onerror = (err) => {
+      console.error("Error loading closed-mouth", err)
+      reject(err)
+    }
+    closedMouthImg.src = "images/drawn/mouth/closed-mouth.png"
+  })
+  closedMouth.images.push({ image: closedMouthImg, promise: closedMouthPromise })
+  await closedMouthPromise
+}
+
+// Load openedMouth images
+async function loadOpenedMouth() {
+  // Load opened-mouth.png
+  const openedMouthImg = new Image()
+  const openedMouthPromise = new Promise((resolve, reject) => {
+    openedMouthImg.onload = () => {
+      console.log("Opened-mouth loaded", openedMouthImg.width, openedMouthImg.height)
+      resolve()
+    }
+    openedMouthImg.onerror = (err) => {
+      console.error("Error loading opened-mouth", err)
+      reject(err)
+    }
+    openedMouthImg.src = "images/drawn/mouth/opened-mouth.png"
+  })
+  openedMouth.images.push({ image: openedMouthImg, promise: openedMouthPromise })
+  await openedMouthPromise
+}
+
+// Check if a point is inside an SVG (same radius as eyeballMask)
+function isPointInSVG(x, y, centerX, centerY, radius) {
+  const dx = x - centerX
+  const dy = y - centerY
   const distance = Math.sqrt(dx * dx + dy * dy)
-  return distance <= maskRadius
+  return distance <= radius
+}
+
+// Check if a point is inside a rectangle
+function isPointInRectangle(x, y, rect) {
+  const left = rect.x - rect.width / 2
+  const right = rect.x + rect.width / 2
+  const top = rect.y - rect.height / 2
+  const bottom = rect.y + rect.height / 2
+  return x >= left && x <= right && y >= top && y <= bottom
 }
 
 async function init() {
@@ -259,25 +291,18 @@ async function init() {
   await new Promise(resolve => requestAnimationFrame(resolve))
   renderer.resize()
   
+  // Load SleepingEyeBall images
+  await loadSleepingEyeBall()
+  
+  // Load animatedEyeBall images
+  await loadAnimatedEyeBall()
+  
+  // Load mouth images
+  await loadClosedMouth()
+  await loadOpenedMouth()
+  
   // Create initial eyes
   await createEyes(SEED)
-  
-  // Create button to change seed
-  const button = document.createElement("button")
-  button.textContent = `Change Seed (Current: ${SEED})`
-  button.style.position = "fixed"
-  button.style.top = "10px"
-  button.style.left = "10px"
-  button.style.zIndex = "1000"
-  button.style.padding = "10px 20px"
-  button.style.fontSize = "14px"
-  button.style.cursor = "pointer"
-  button.onclick = async () => {
-    SEED = Math.floor(Math.random() * 10000)
-    button.textContent = `Change Seed (Current: ${SEED})`
-    await createEyes(SEED)
-  }
-  document.body.appendChild(button)
   
   run(update)
 }
@@ -337,24 +362,67 @@ function update(dt) {
 
   // Handle click detection
   if (input.isDown() && mouseX !== null && mouseY !== null) {
-    // Check if clicked on any visible eye
+    // Check if clicked on any visible eye SVG (not yet activated)
     for (let i = 0; i < visibleEyeCount && i < irises.length; i++) {
-      if (!eyesClicked.has(i)) {
+      if (!eyesActivated.has(i)) {
         const eyeballMask = eyeballMasks[i]
-        if (isPointInEye(mouseX, mouseY, eyeballMask)) {
+        const svgRadius = eyeballMask.getRadius()
+        if (isPointInSVG(mouseX, mouseY, eyeballMask.x, eyeballMask.y, svgRadius)) {
+          // Activate this eye (switch from SVG to eyeballMask)
+          eyesActivated.add(i)
           eyesClicked.add(i)
+          
           // Reveal next eye if not all are visible yet
           if (visibleEyeCount < EYE_COUNT) {
             visibleEyeCount++
           }
-          // Check if all visible eyes have been clicked and all eyes are displayed
-          if (eyesClicked.size === visibleEyeCount && visibleEyeCount === EYE_COUNT) {
+          
+          // Check if all visible eyes have been activated and all eyes are displayed
+          if (eyesActivated.size === visibleEyeCount && visibleEyeCount === EYE_COUNT) {
             showRectangle = true
           }
-          console.log(`Eye ${i} clicked. Total clicked: ${eyesClicked.size}/${visibleEyeCount} visible, ${EYE_COUNT} total`)
+          console.log(`Eye ${i} SVG clicked - activated. Total activated: ${eyesActivated.size}/${visibleEyeCount} visible, ${EYE_COUNT} total`)
           break
         }
       }
+    }
+    
+    // Check if clicked on black rectangle
+    if (rectangle && showRectangle && !rectangleClicked && !showRedRectangle && isPointInRectangle(mouseX, mouseY, rectangle)) {
+      rectangleClicked = true
+      showRedRectangle = true
+      redRectangleStartTime = Date.now()
+      console.log("Black rectangle clicked - showing red rectangle")
+    }
+  }
+  
+  // Check if 1 second has passed since red rectangle appeared
+  if (showRedRectangle && redRectangleStartTime !== null) {
+    const elapsed = Date.now() - redRectangleStartTime
+    if (elapsed >= 1000) {
+      showRedRectangle = false
+      rectangleClicked = false
+      redRectangleStartTime = null
+      rectangleTurnedBlack = true  // Mark that rectangle has turned back to black
+      console.log("Switching back to black rectangle")
+    }
+  }
+  
+  // Start delay timer when rectangle turns back to black (end state)
+  if (rectangleTurnedBlack && !delayStarted && !maskClosing) {
+    delayStarted = true
+    delayTimer = 0
+    console.log("Rectangle turned black - starting delay timer")
+  }
+  
+  // Update delay timer
+  if (delayStarted && !maskClosing) {
+    delayTimer += dt
+    // After delay duration, start closing the mask with animation
+    if (delayTimer >= DELAY_DURATION) {
+      maskClosing = true
+      mask.setExpanded(false) // Start closing animation
+      console.log("Starting mask closing animation")
     }
   }
 
@@ -365,24 +433,110 @@ function update(dt) {
       const iris = irises[i]
       const eyeballMask = eyeballMasks[i]
       
-      // Update iris position if mouse is available
-      if (mouseX !== null && mouseY !== null) {
-        updateIrisPosition(iris, eyeballMask, mouseX, mouseY)
+      if (eyesActivated.has(i)) {
+        // Draw activated eye (eyeballMask with iris)
+        // Update iris position if mouse is available
+        if (mouseX !== null && mouseY !== null) {
+          updateIrisPosition(iris, eyeballMask, mouseX, mouseY)
+        }
+        
+        // Draw eye
+        ctx.save()
+        eyeballMask.createClipPath(ctx)
+        iris.draw(ctx)
+        ctx.restore()
+        // eyeballMask.drawStroke(ctx)  // Stroke made invisible
+        
+        // Draw animatedEyeBall on top of eyeballMask
+        if (animatedEyeBall.images.length > 0) {
+          const eyeballImage = animatedEyeBall.images[0].image
+          if (eyeballImage && eyeballImage.complete) {
+            const scaledSize = eyeballMaskSize * animatedEyeBallScale
+            const drawX = eyeballMask.x - scaledSize / 2
+            const drawY = eyeballMask.y - scaledSize / 2
+            
+            ctx.drawImage(eyeballImage, drawX, drawY, scaledSize, scaledSize)
+          }
+        }
+      } else {
+        // Draw SleepingEyeBall image for non-activated eyes
+        if (SleepingEyeBall.images.length > 0) {
+          const sleepingImage = SleepingEyeBall.images[0].image
+          if (sleepingImage && sleepingImage.complete) {
+            const drawX = eyeballMask.x - eyeballMaskSize / 2
+            const drawY = eyeballMask.y - eyeballMaskSize / 2
+            
+            ctx.drawImage(sleepingImage, drawX, drawY, eyeballMaskSize, eyeballMaskSize)
+          }
+        }
       }
-      
-      // Draw eye
-      ctx.save()
-      eyeballMask.createClipPath(ctx)
-      iris.draw(ctx)
-      ctx.restore()
-      eyeballMask.drawStroke(ctx)
     }
 
-    // Draw rectangle when last eye is clicked (draw on top)
+    // Draw mouth when last eye is clicked (draw on top)
     if (rectangle && showRectangle) {
-      rectangle.draw(ctx)
+      // Show opened mouth if clicked, otherwise show closed mouth
+      if (showRedRectangle && openedMouth.images.length > 0) {
+        const openedMouthImage = openedMouth.images[0].image
+        if (openedMouthImage && openedMouthImage.complete) {
+          ctx.save()
+          // Translate to rectangle center
+          ctx.translate(rectangle.x, rectangle.y)
+          // Rotate 90 degrees
+          ctx.rotate(Math.PI / 2)
+          // Calculate aspect ratio and scale to fit rectangle
+          const imageAspect = openedMouthImage.width / openedMouthImage.height
+          const rectAspect = rectangle.width / rectangle.height
+          let drawWidth, drawHeight
+          if (imageAspect > rectAspect) {
+            // Image is wider relative to its height - fit to rectangle height
+            drawHeight = rectangle.height * openedMouthScale
+            drawWidth = drawHeight * imageAspect
+          } else {
+            // Image is taller relative to its width - fit to rectangle width
+            drawWidth = rectangle.width * openedMouthScale
+            drawHeight = drawWidth / imageAspect
+          }
+          // Draw centered at origin (after translation and rotation)
+          ctx.drawImage(openedMouthImage, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight)
+          ctx.restore()
+        }
+      } else if (closedMouth.images.length > 0) {
+        const closedMouthImage = closedMouth.images[0].image
+        if (closedMouthImage && closedMouthImage.complete) {
+          ctx.save()
+          // Translate to rectangle center
+          ctx.translate(rectangle.x, rectangle.y)
+          // Rotate 90 degrees
+          ctx.rotate(Math.PI / 2)
+          // Calculate aspect ratio and scale to fit rectangle
+          const imageAspect = closedMouthImage.width / closedMouthImage.height
+          const rectAspect = rectangle.width / rectangle.height
+          let drawWidth, drawHeight
+          if (imageAspect > rectAspect) {
+            // Image is wider relative to its height - fit to rectangle height
+            drawHeight = rectangle.height * closedMouthScale
+            drawWidth = drawHeight * imageAspect
+          } else {
+            // Image is taller relative to its width - fit to rectangle width
+            drawWidth = rectangle.width * closedMouthScale
+            drawHeight = drawWidth / imageAspect
+          }
+          // Draw centered at origin (after translation and rotation)
+          ctx.drawImage(closedMouthImage, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight)
+          ctx.restore()
+        }
+      }
     }
   })
+  
+  // Finish sequence when mask is fully closed (check mask spring position)
+  if (maskClosing) {
+    // Check if mask spring has reached 0 (fully closed)
+    const maskRadius = mask.spring.position
+    if (maskRadius <= 1) { // Use small threshold for floating point comparison
+      finish()
+    }
+  }
 }
 
 init()

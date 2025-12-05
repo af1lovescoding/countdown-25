@@ -14,7 +14,7 @@ class Iris {
 
   async load() {
     const img = new Image()
-    img.src = "images/iris.svg"
+    img.src = "images/drawn/iris/iris-1.png"
     await new Promise((resolve, reject) => {
       img.onload = () => {
         console.log("Iris loaded", img.width, img.height)

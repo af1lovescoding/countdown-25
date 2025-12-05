@@ -62,7 +62,9 @@ export class SequenceRunner extends EventTarget {
     if (this.currentSequence) {
       this.currentSequence.iframe.style = "z-index:99";
       this.currentSequence.iframe.contentWindow.focus()
-      this.currentSequence.iframe.contentWindow.postMessage("started", "*")
+      // Send cursor visibility info: show cursor for all sequences except sequence 0
+      const showCursor = this.sequencesFiltered[this.currentSequence.sequenceId].content !== "0"
+      this.currentSequence.iframe.contentWindow.postMessage({ type: "started", showCursor: showCursor }, "*")
       this.sequencesFiltered[this.currentSequence.sequenceId].count++
     }
 

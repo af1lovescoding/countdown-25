@@ -39,6 +39,12 @@ let hoverTime = 0
 let isHovering = false
 const TRACKING_DURATION = 2 // seconds
 
+// Mask closing variables
+let delayStarted = false
+let delayTimer = 0
+const DELAY_DURATION = 3.0 // 3 seconds delay after background color changes
+let maskClosing = false
+
 // Fly movement parameters
 const FLYING_SPEED = 200 // pixels per second - tweak this to adjust speed
 const NOISE_AMPLITUDE = 500 // amplitude of organic noise movement
@@ -54,6 +60,51 @@ const TRACKING_SQUARE_STROKE = 2 // stroke width
 // Initialization flag
 let initialized = false
 
+// Fly image
+let flyImage = null
+// Crosshair images
+let bigCrosshairImage = null
+let pointerImage = null
+
+// Crosshair rotation state
+const crosshairRotation = {
+    bigCrosshairAngle: 0,
+    pointerAngle: 0,
+    noiseTime: 0,
+    bigCrosshairNoiseOffset: Math.random() * 1000,
+    pointerNoiseOffset: Math.random() * 1000,
+    bigCrosshairAmplitude: 1, // Maximum rotation amplitude for big crosshair in radians
+    pointerAmplitude: 0.75, // Maximum rotation amplitude for pointer in radians
+    noiseSpeed: 8.0 // Speed of noise oscillation
+}
+
+// Load images
+async function loadImages() {
+    // Load fly image
+    flyImage = new Image()
+    flyImage.src = 'images/fly/fly-1.png'
+    await new Promise((resolve, reject) => {
+        flyImage.onload = resolve
+        flyImage.onerror = reject
+    })
+    
+    // Load big crosshair image
+    bigCrosshairImage = new Image()
+    bigCrosshairImage.src = 'images/crosshair/big-crosshair.png'
+    await new Promise((resolve, reject) => {
+        bigCrosshairImage.onload = resolve
+        bigCrosshairImage.onerror = reject
+    })
+    
+    // Load pointer image
+    pointerImage = new Image()
+    pointerImage.src = 'images/crosshair/pointer.png'
+    await new Promise((resolve, reject) => {
+        pointerImage.onload = resolve
+        pointerImage.onerror = reject
+    })
+}
+
 // Simple noise function using sine waves for organic movement
 function noise(t, offset) {
     return Math.sin(t * 0.5 + offset) * 0.5 + 
@@ -64,6 +115,37 @@ function noise(t, offset) {
 function update(dt) {
     // Update mask animation
     mask.update(dt)
+    
+    // Update crosshair rotation noise time
+    crosshairRotation.noiseTime += dt * crosshairRotation.noiseSpeed
+    
+    // Calculate lock progress (0 = not tracking, 1 = fully locked)
+    let lockProgress = 0
+    if (!fly.visible) {
+        lockProgress = 1 // Fully locked when fly is caught
+    } else if (isHovering) {
+        // Gradually increase lock progress as hover time increases
+        lockProgress = Math.min(hoverTime / TRACKING_DURATION, 1)
+    }
+    
+    // Calculate rotation damping based on lock progress
+    // Rotation stops at 90% of tracking (0.9 lock progress)
+    // Map lockProgress 0-0.9 to rotationDamping 1-0
+    const rotationDamping = Math.max(0, 1 - (lockProgress / 0.9))
+    
+    // Update crosshair rotation using noise (janky rotation)
+    if (rotationDamping > 0) {
+        const bigCrosshairNoise = noise(crosshairRotation.noiseTime, crosshairRotation.bigCrosshairNoiseOffset)
+        const pointerNoise = noise(crosshairRotation.noiseTime * 1.3, crosshairRotation.pointerNoiseOffset)
+        
+        // Apply janky rotation with damping
+        crosshairRotation.bigCrosshairAngle = bigCrosshairNoise * crosshairRotation.bigCrosshairAmplitude * rotationDamping
+        crosshairRotation.pointerAngle = pointerNoise * crosshairRotation.pointerAmplitude * rotationDamping * -1 // Opposite direction
+    } else {
+        // Fully locked - no rotation
+        crosshairRotation.bigCrosshairAngle = 0
+        crosshairRotation.pointerAngle = 0
+    }
     
     // Update noise time for organic movement
     fly.noiseTime += dt * NOISE_SPEED
@@ -150,6 +232,9 @@ function update(dt) {
         hoverTime = 0
         
         if (fly.visible) {
+            // Reset velocity when transitioning from tracking to wander to prevent teleporting
+            fly.vx = 0
+            fly.vy = 0
             // Update wander target periodically to encourage exploration
             fly.wanderTime += dt
             if (fly.wanderTime >= WANDER_CHANGE_INTERVAL) {
@@ -228,29 +313,88 @@ function update(dt) {
         if (clickDist < fly.radius) {
             fly.visible = false
             backgroundColor = 1 // Change to black
+            // Start delay timer when background color changes
+            if (!delayStarted && !maskClosing) {
+                delayStarted = true
+                delayTimer = 0
+                console.log("Background color changed - starting delay timer")
+            }
+        }
+    }
+    
+    // Update delay timer
+    if (delayStarted && !maskClosing) {
+        delayTimer += dt
+        // After delay duration, start closing the mask with animation
+        if (delayTimer >= DELAY_DURATION) {
+            maskClosing = true
+            mask.setExpanded(false) // Start closing animation
+            console.log("Starting mask closing animation")
         }
     }
     
     // Apply mask and draw content inside
     mask.applyMask(ctx, () => {
         // Draw background
-        ctx.fillStyle = backgroundColor === 0 ? '#ffffff' : '#000000'
+        ctx.fillStyle = backgroundColor === 0 ? '#ffffff' : '#f0ead6'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         
-        // Draw tracking square
-        ctx.strokeStyle = backgroundColor === 0 ? '#000000' : '#ffffff'
-        ctx.lineWidth = TRACKING_SQUARE_STROKE
-        ctx.strokeRect(trackingSquareX, trackingSquareY, TRACKING_SQUARE_SIZE, TRACKING_SQUARE_SIZE)
+        // Draw crosshair (big crosshair as outer, pointer as inner) with rotation
+        if (bigCrosshairImage) {
+            const crosshairSize = TRACKING_SQUARE_SIZE
+            ctx.save()
+            ctx.translate(mouseX, mouseY)
+            ctx.rotate(crosshairRotation.bigCrosshairAngle)
+            ctx.drawImage(bigCrosshairImage, -crosshairSize / 2, -crosshairSize / 2, crosshairSize, crosshairSize)
+            ctx.restore()
+            
+            // Draw debug text showing tracking percentage
+            let displayLockProgress = 0
+            if (!fly.visible) {
+                displayLockProgress = 1
+            } else if (isHovering) {
+                displayLockProgress = Math.min(hoverTime / TRACKING_DURATION, 1)
+            }
+            const trackingPercentage = Math.round(displayLockProgress * 100)
+            ctx.fillStyle = backgroundColor === 0 ? '#000000' : '#ffffff'
+            ctx.font = '24px monospace'
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(`${trackingPercentage}%`, mouseX + crosshairSize / 2 + 20, mouseY)
+        }
+        
+        // Draw pointer centered inside the big crosshair with rotation
+        if (pointerImage) {
+            const pointerSize = TRACKING_SQUARE_SIZE * 0.5 // Make pointer smaller than big crosshair
+            ctx.save()
+            ctx.translate(mouseX, mouseY)
+            ctx.rotate(crosshairRotation.pointerAngle)
+            ctx.drawImage(pointerImage, -pointerSize / 2, -pointerSize / 2, pointerSize, pointerSize)
+            ctx.restore()
+        }
         
         // Draw fly
-        if (fly.visible) {
-            ctx.fillStyle = backgroundColor === 0 ? '#000000' : '#ffffff'
-            ctx.beginPath()
-            ctx.arc(fly.x, fly.y, fly.radius, 0, Math.PI * 2)
-            ctx.fill()
+        if (fly.visible && flyImage) {
+            // Draw fly image centered on fly position
+            const imageSize = fly.radius * 5
+            const x = fly.x - imageSize / 2
+            const y = fly.y - imageSize / 2
+            ctx.drawImage(flyImage, x, y, imageSize, imageSize)
         }
     })
+    
+    // Finish sequence when mask is fully closed (check mask spring position)
+    if (maskClosing) {
+        // Check if mask spring has reached 0 (fully closed)
+        const maskRadius = mask.spring.position
+        if (maskRadius <= 1) { // Use small threshold for floating point comparison
+            finish()
+        }
+    }
 }
 
-run(update)
+// Load images and start the loop
+loadImages().then(() => {
+    run(update)
+})
 

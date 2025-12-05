@@ -18,9 +18,18 @@ export function createIframeClient() {
         window.addEventListener(
             "message",
             async (event) => {
-                if (event.data === "started") {
+                if (event.data === "started" || (event.data && event.data.type === "started")) {
                     if (state === STATE.WAITING)
                         state = STATE.RUNNING
+                    
+                    // Handle cursor visibility
+                    if (event.data && typeof event.data === "object" && "showCursor" in event.data) {
+                        if (event.data.showCursor) {
+                            document.body.classList.add("show-cursor")
+                        } else {
+                            document.body.classList.remove("show-cursor")
+                        }
+                    }
                 }
             },
             false

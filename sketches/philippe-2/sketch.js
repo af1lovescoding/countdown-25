@@ -11,7 +11,7 @@ let wasDragging = false
 // Drag sensitivity: controls how much distance is needed to cycle through all frames
 const DRAG_SENSITIVITY = 2.8
 // Image scale: controls the size of all images (1.0 = original size, 0.5 = half size, 2.0 = double size)
-const IMAGE_SCALE = 1.5
+const IMAGE_SCALE = .5
 
 // Mask closing variables
 let delayStarted = false
@@ -32,12 +32,12 @@ const mask = new NoisyEllipseMask(canvas, input, {
 
 // Load all images from the images folder
 async function loadImages() {
-  const imageCount = 16
+  const imageCount = 17
   images = []
   
   for (let i = 1; i <= imageCount; i++) {
     const img = new Image()
-    img.src = `images/${i}.png`
+    img.src = `images/new-frames/${i}.png`
     await new Promise((resolve, reject) => {
       img.onload = resolve
       img.onerror = reject
