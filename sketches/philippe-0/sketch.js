@@ -65,6 +65,9 @@ const WANDER_CHANGE_INTERVAL = 3 // seconds between wander target changes
 const TRACKING_SQUARE_SIZE = 200 // size of the tracking square
 const TRACKING_SQUARE_STROKE = 2 // stroke width
 
+// Fly bounding area scale (0.0 to 1.0, smaller = more constrained)
+const FLY_AREA_SCALE = 0.8 // Make the area 60% of the mask size
+
 // Initialization flag
 let initialized = false
 
@@ -138,6 +141,40 @@ function noise(t, offset) {
            Math.sin(t * 2.1 + offset * 2.3) * 0.2
 }
 
+// Helper function to calculate the bounding rectangle inside the mask
+function getMaskBounds() {
+    const centerX = canvas.width / 2
+    const centerY = canvas.height / 2
+    
+    // Calculate mask dimensions (same logic as in NoisyEllipseMask)
+    const maxRadiusX = (canvas.width / 2) - mask.margin
+    const maxRadiusY = (canvas.height / 2) - mask.margin
+    const maxRadius = Math.min(maxRadiusX, maxRadiusY)
+    
+    // Use maximum radius for static bounding area (not current spring position)
+    const radius = maxRadius
+    const scaleX = maxRadiusX / maxRadius
+    const scaleY = maxRadiusY / maxRadius
+    const radiusX = radius * scaleX
+    const radiusY = radius * scaleY
+    
+    // Calculate safe rectangle bounds (accounting for noise and fly radius)
+    // Apply scale factor to make area smaller, then subtract noise strength and fly radius
+    const scaledRadiusX = radiusX * FLY_AREA_SCALE
+    const scaledRadiusY = radiusY * FLY_AREA_SCALE
+    const safeRadiusX = Math.max(0, scaledRadiusX - mask.noiseStrength - fly.radius)
+    const safeRadiusY = Math.max(0, scaledRadiusY - mask.noiseStrength - fly.radius)
+    
+    return {
+        left: centerX - safeRadiusX,
+        right: centerX + safeRadiusX,
+        top: centerY - safeRadiusY,
+        bottom: centerY + safeRadiusY,
+        width: safeRadiusX * 2,
+        height: safeRadiusY * 2
+    }
+}
+
 function update(dt) {
     // Update mask animation
     mask.update(dt)
@@ -175,13 +212,18 @@ function update(dt) {
     
     // Update noise time for organic movement
     fly.noiseTime += dt * NOISE_SPEED
+    
+    // Get mask bounds for constraining fly
+    const maskBounds = getMaskBounds()
+    
     // Initialize fly position on first frame
     if (!initialized && canvas.width > 0 && canvas.height > 0) {
-        fly.x = canvas.width * 0.3
-        fly.y = canvas.height * 0.3
-        // Set initial wander target to encourage exploration
-        fly.wanderTargetX = Math.random() * canvas.width
-        fly.wanderTargetY = Math.random() * canvas.height
+        // Initialize fly position randomly within mask bounds
+        fly.x = maskBounds.left + Math.random() * maskBounds.width
+        fly.y = maskBounds.top + Math.random() * maskBounds.height
+        // Set initial wander target within mask bounds
+        fly.wanderTargetX = maskBounds.left + Math.random() * maskBounds.width
+        fly.wanderTargetY = maskBounds.top + Math.random() * maskBounds.height
         initialized = true
     }
     
@@ -245,11 +287,15 @@ function update(dt) {
             const jitterAmount = Math.min(distanceToCenter / 100, 1) * ORGANIC_JITTER
             fly.x += (Math.random() - 0.5) * jitterAmount * dt
             fly.y += (Math.random() - 0.5) * jitterAmount * dt
+            
+            // Constrain fly to mask bounds
+            fly.x = math.clamp(fly.x, maskBounds.left, maskBounds.right)
+            fly.y = math.clamp(fly.y, maskBounds.top, maskBounds.bottom)
         } else {
-            // Snap to center when time is up or already there
+            // Snap to center when time is up or already there (but ensure center is within bounds)
             if (hoverTime >= TRACKING_DURATION || distanceToCenter <= 1) {
-                fly.x = centerX
-                fly.y = centerY
+                fly.x = math.clamp(centerX, maskBounds.left, maskBounds.right)
+                fly.y = math.clamp(centerY, maskBounds.top, maskBounds.bottom)
             }
         }
     } else {
@@ -264,9 +310,9 @@ function update(dt) {
             // Update wander target periodically to encourage exploration
             fly.wanderTime += dt
             if (fly.wanderTime >= WANDER_CHANGE_INTERVAL) {
-                // Pick a new random target anywhere on the canvas
-                fly.wanderTargetX = Math.random() * canvas.width
-                fly.wanderTargetY = Math.random() * canvas.height
+                // Pick a new random target within mask bounds
+                fly.wanderTargetX = maskBounds.left + Math.random() * maskBounds.width
+                fly.wanderTargetY = maskBounds.top + Math.random() * maskBounds.height
                 fly.wanderTime = 0
             }
             
@@ -316,18 +362,18 @@ function update(dt) {
             fly.x += posNoiseX
             fly.y += posNoiseY
             
-            // Keep fly on screen with bounce effect (but allow more exploration)
-            if (fly.x < fly.radius || fly.x > canvas.width - fly.radius) {
+            // Constrain fly to mask bounds with bounce effect
+            if (fly.x < maskBounds.left || fly.x > maskBounds.right) {
                 fly.vx *= -0.7
-                fly.x = math.clamp(fly.x, fly.radius, canvas.width - fly.radius)
+                fly.x = math.clamp(fly.x, maskBounds.left, maskBounds.right)
                 // Add a push away from the edge
-                fly.vx += (fly.x < canvas.width / 2 ? 1 : -1) * 200 * dt
+                fly.vx += (fly.x < centerX ? 1 : -1) * 200 * dt
             }
-            if (fly.y < fly.radius || fly.y > canvas.height - fly.radius) {
+            if (fly.y < maskBounds.top || fly.y > maskBounds.bottom) {
                 fly.vy *= -0.7
-                fly.y = math.clamp(fly.y, fly.radius, canvas.height - fly.radius)
+                fly.y = math.clamp(fly.y, maskBounds.top, maskBounds.bottom)
                 // Add a push away from the edge
-                fly.vy += (fly.y < canvas.height / 2 ? 1 : -1) * 200 * dt
+                fly.vy += (fly.y < centerY ? 1 : -1) * 200 * dt
             }
         }
     }
@@ -422,6 +468,9 @@ function update(dt) {
             ctx.drawImage(flyImage, x, y, imageSize, imageSize)
         }
     })
+    
+
+
     
     // Draw white flash overlay
     if (isFlashing) {

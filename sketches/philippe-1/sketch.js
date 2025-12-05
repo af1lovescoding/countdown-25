@@ -436,28 +436,42 @@ function update(dt) {
       const eyeballMask = eyeballMasks[i]
       
       if (eyesActivated.has(i)) {
-        // Draw activated eye (eyeballMask with iris)
-        // Update iris position if mouse is available
-        if (mouseX !== null && mouseY !== null) {
-          updateIrisPosition(iris, eyeballMask, mouseX, mouseY)
-        }
-        
-        // Draw eye
-        ctx.save()
-        eyeballMask.createClipPath(ctx)
-        iris.draw(ctx)
-        ctx.restore()
-        // eyeballMask.drawStroke(ctx)  // Stroke made invisible
-        
-        // Draw animatedEyeBall on top of eyeballMask
-        if (animatedEyeBall.images.length > 0) {
-          const eyeballImage = animatedEyeBall.images[0].image
-          if (eyeballImage && eyeballImage.complete) {
-            const scaledSize = eyeballMaskSize * animatedEyeBallScale
-            const drawX = eyeballMask.x - scaledSize / 2
-            const drawY = eyeballMask.y - scaledSize / 2
-            
-            ctx.drawImage(eyeballImage, drawX, drawY, scaledSize, scaledSize)
+        // When closed mouth reappears, show sleeping eyes without iris
+        if (rectangleTurnedBlack) {
+          // Draw SleepingEyeBall image when closed mouth reappears (eyes close)
+          if (SleepingEyeBall.images.length > 0) {
+            const sleepingImage = SleepingEyeBall.images[0].image
+            if (sleepingImage && sleepingImage.complete) {
+              const drawX = eyeballMask.x - eyeballMaskSize / 2
+              const drawY = eyeballMask.y - eyeballMaskSize / 2
+              
+              ctx.drawImage(sleepingImage, drawX, drawY, eyeballMaskSize, eyeballMaskSize)
+            }
+          }
+        } else {
+          // Draw activated eye (eyeballMask with iris)
+          // Update iris position if mouse is available
+          if (mouseX !== null && mouseY !== null) {
+            updateIrisPosition(iris, eyeballMask, mouseX, mouseY)
+          }
+          
+          // Draw eye
+          ctx.save()
+          eyeballMask.createClipPath(ctx)
+          iris.draw(ctx)
+          ctx.restore()
+          // eyeballMask.drawStroke(ctx)  // Stroke made invisible
+          
+          // Draw animatedEyeBall on top of eyeballMask
+          if (animatedEyeBall.images.length > 0) {
+            const eyeballImage = animatedEyeBall.images[0].image
+            if (eyeballImage && eyeballImage.complete) {
+              const scaledSize = eyeballMaskSize * animatedEyeBallScale
+              const drawX = eyeballMask.x - scaledSize / 2
+              const drawY = eyeballMask.y - scaledSize / 2
+              
+              ctx.drawImage(eyeballImage, drawX, drawY, scaledSize, scaledSize)
+            }
           }
         }
       } else {

@@ -29,7 +29,7 @@ if(sequenceData)
 	})
 
 	//console.log(sequenceData);
-	const runner = new SequenceRunner(sequenceData, "3");
+	const runner = new SequenceRunner(sequenceData, "0");
 
 	initMenu(runner)
 	initTransitionUI(runner)
