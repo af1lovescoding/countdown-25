@@ -9,7 +9,7 @@ let currentFrameIndex = 0
 let dragStartY = null
 let wasDragging = false
 // Drag sensitivity: controls how much distance is needed to cycle through all frames
-const DRAG_SENSITIVITY = 2.8
+const DRAG_SENSITIVITY = 1.8
 // Image scale: controls the size of all images (1.0 = original size, 0.5 = half size, 2.0 = double size)
 const IMAGE_SCALE = .5
 
@@ -18,6 +18,7 @@ let delayStarted = false
 let delayTimer = 0
 const DELAY_DURATION = 3.0 // 3 seconds delay after reaching final image
 let maskClosing = false
+let finalStateReached = false // Track if we've reached the final state (locked to last image)
 
 // Create mask instance with configuration
 const mask = new NoisyEllipseMask(canvas, input, {
@@ -32,12 +33,12 @@ const mask = new NoisyEllipseMask(canvas, input, {
 
 // Load all images from the images folder
 async function loadImages() {
-  const imageCount = 17
+  const imageCount = 16
   images = []
   
   for (let i = 1; i <= imageCount; i++) {
     const img = new Image()
-    img.src = `images/new-frames/${i}.png`
+    img.src = `images/new-frames/new-frames-eyes/M_${99 + i}.png`
     await new Promise((resolve, reject) => {
       img.onload = resolve
       img.onerror = reject
@@ -61,7 +62,7 @@ function update(dt) {
   const mouseY = input.getY() - canvasRect.top * pixelRatio
   
   // Handle drag start
-  if (input.isDown()) {
+  if (input.isDown() && !finalStateReached) {
     // Reset to frame 1 and start tracking drag
     dragStartY = mouseY
     wasDragging = false
@@ -72,8 +73,8 @@ function update(dt) {
     maskClosing = false
   }
   
-  // Handle dragging
-  if (input.isPressed() && images.length > 0 && dragStartY !== null) {
+  // Handle dragging (only if not in final state)
+  if (input.isPressed() && images.length > 0 && dragStartY !== null && !finalStateReached) {
     // Calculate relative movement from drag start
     const dragDelta = mouseY - dragStartY
     
@@ -106,16 +107,14 @@ function update(dt) {
       delayStarted = false
       delayTimer = 0
       maskClosing = false
+      finalStateReached = false
+    } else if (currentFrameIndex === images.length - 1 && !finalStateReached) {
+      // Lock to final image when we reach it and start the delay timer
+      finalStateReached = true
+      currentFrameIndex = images.length - 1 // Ensure we're at the last frame
+      delayStarted = true
+      delayTimer = 0
     }
-  }
-  
-  // Check if we're at the final image (end state)
-  const isAtFinalImage = images.length > 0 && currentFrameIndex === images.length - 1
-  
-  // Start delay timer when we reach the final image
-  if (isAtFinalImage && !delayStarted && !maskClosing) {
-    delayStarted = true
-    delayTimer = 0
   }
   
   // Update delay timer
@@ -131,8 +130,10 @@ function update(dt) {
   // Apply mask and draw content inside
   mask.applyMask(ctx, () => {
     // Draw the current frame centered
-    if (images.length > 0 && images[currentFrameIndex]) {
-      const img = images[currentFrameIndex]
+    // In final state, always show the last image
+    const frameToShow = finalStateReached ? images.length - 1 : currentFrameIndex
+    if (images.length > 0 && images[frameToShow]) {
+      const img = images[frameToShow]
       const scaledWidth = img.width * IMAGE_SCALE
       const scaledHeight = img.height * IMAGE_SCALE
       const x = (canvas.width - scaledWidth) / 2

@@ -45,6 +45,14 @@ let delayTimer = 0
 const DELAY_DURATION = 3.0 // 3 seconds delay after background color changes
 let maskClosing = false
 
+// Flash overlay variables
+let flashTime = 0
+let isFlashing = false
+const FLASH_IN_DURATION = 0.2 // seconds to flash in
+const FLASH_HOLD_DURATION = 1.0 // seconds to stay at full opacity
+const FLASH_OUT_DURATION = 1.0 // seconds to fade out
+const FLASH_TOTAL_DURATION = FLASH_IN_DURATION + FLASH_HOLD_DURATION + FLASH_OUT_DURATION
+
 // Fly movement parameters
 const FLYING_SPEED = 200 // pixels per second - tweak this to adjust speed
 const NOISE_AMPLITUDE = 500 // amplitude of organic noise movement
@@ -65,6 +73,9 @@ let flyImage = null
 // Crosshair images
 let bigCrosshairImage = null
 let pointerImage = null
+// Background images (SVG)
+let backgroundImage1 = null  // For backgroundColor === 0
+let backgroundImage2 = null  // For backgroundColor === 1
 
 // Crosshair rotation state
 const crosshairRotation = {
@@ -102,6 +113,21 @@ async function loadImages() {
     await new Promise((resolve, reject) => {
         pointerImage.onload = resolve
         pointerImage.onerror = reject
+    })
+    
+    // Load background SVG images
+    backgroundImage1 = new Image()
+    backgroundImage1.src = 'images/background/background-1.svg'
+    await new Promise((resolve, reject) => {
+        backgroundImage1.onload = resolve
+        backgroundImage1.onerror = reject
+    })
+    
+    backgroundImage2 = new Image()
+    backgroundImage2.src = 'images/background/background-2.svg'
+    await new Promise((resolve, reject) => {
+        backgroundImage2.onload = resolve
+        backgroundImage2.onerror = reject
     })
 }
 
@@ -312,6 +338,17 @@ function update(dt) {
         const clickDist = math.dist(mouseX, mouseY, fly.x, fly.y)
         if (clickDist < fly.radius) {
             fly.visible = false
+            // Start flash animation (background will change during flash)
+            isFlashing = true
+            flashTime = 0
+        }
+    }
+    
+    // Update flash animation and change background during flash
+    if (isFlashing) {
+        flashTime += dt
+        // Change background when flash reaches hold phase (after flash in)
+        if (flashTime >= FLASH_IN_DURATION && backgroundColor === 0) {
             backgroundColor = 1 // Change to black
             // Start delay timer when background color changes
             if (!delayStarted && !maskClosing) {
@@ -319,6 +356,10 @@ function update(dt) {
                 delayTimer = 0
                 console.log("Background color changed - starting delay timer")
             }
+        }
+        if (flashTime >= FLASH_TOTAL_DURATION) {
+            isFlashing = false
+            flashTime = 0
         }
     }
     
@@ -335,9 +376,22 @@ function update(dt) {
     
     // Apply mask and draw content inside
     mask.applyMask(ctx, () => {
-        // Draw background
-        ctx.fillStyle = backgroundColor === 0 ? '#ffffff' : '#f0ead6'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        // Draw background SVG image with 80% opacity
+        const currentBackgroundImage = backgroundColor === 0 ? backgroundImage1 : backgroundImage2
+        if (currentBackgroundImage) {
+            ctx.save()
+            ctx.globalAlpha = 0.7
+            // Draw SVG to fill entire canvas
+            ctx.drawImage(currentBackgroundImage, 0, 0, canvas.width, canvas.height)
+            ctx.restore()
+        } else {
+            // Fallback to solid color if images haven't loaded yet
+            ctx.save()
+            ctx.globalAlpha = 0.8
+            ctx.fillStyle = backgroundColor === 0 ? '#ffffff' : '#f0ead6'
+            ctx.fillRect(0, 0, canvas.width, canvas.height)
+            ctx.restore()
+        }
         
         // Draw crosshair (big crosshair as outer, pointer as inner) with rotation
         if (bigCrosshairImage) {
@@ -347,20 +401,6 @@ function update(dt) {
             ctx.rotate(crosshairRotation.bigCrosshairAngle)
             ctx.drawImage(bigCrosshairImage, -crosshairSize / 2, -crosshairSize / 2, crosshairSize, crosshairSize)
             ctx.restore()
-            
-            // Draw debug text showing tracking percentage
-            let displayLockProgress = 0
-            if (!fly.visible) {
-                displayLockProgress = 1
-            } else if (isHovering) {
-                displayLockProgress = Math.min(hoverTime / TRACKING_DURATION, 1)
-            }
-            const trackingPercentage = Math.round(displayLockProgress * 100)
-            ctx.fillStyle = backgroundColor === 0 ? '#000000' : '#ffffff'
-            ctx.font = '24px monospace'
-            ctx.textAlign = 'left'
-            ctx.textBaseline = 'middle'
-            ctx.fillText(`${trackingPercentage}%`, mouseX + crosshairSize / 2 + 20, mouseY)
         }
         
         // Draw pointer centered inside the big crosshair with rotation
@@ -382,6 +422,28 @@ function update(dt) {
             ctx.drawImage(flyImage, x, y, imageSize, imageSize)
         }
     })
+    
+    // Draw white flash overlay
+    if (isFlashing) {
+        let flashOpacity = 0
+        if (flashTime <= FLASH_IN_DURATION) {
+            // Flash in: 0 to 1 over FLASH_IN_DURATION
+            flashOpacity = flashTime / FLASH_IN_DURATION
+        } else if (flashTime <= FLASH_IN_DURATION + FLASH_HOLD_DURATION) {
+            // Hold at full opacity
+            flashOpacity = 1
+        } else {
+            // Fade out: 1 to 0 over FLASH_OUT_DURATION
+            const fadeOutTime = flashTime - (FLASH_IN_DURATION + FLASH_HOLD_DURATION)
+            flashOpacity = 1 - (fadeOutTime / FLASH_OUT_DURATION)
+        }
+        
+        ctx.save()
+        ctx.globalAlpha = flashOpacity
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.restore()
+    }
     
     // Finish sequence when mask is fully closed (check mask spring position)
     if (maskClosing) {

@@ -404,6 +404,8 @@ function update(dt) {
       rectangleClicked = false
       redRectangleStartTime = null
       rectangleTurnedBlack = true  // Mark that rectangle has turned back to black
+      // Hide cursor when closed-mouth reappears
+      document.body.classList.remove("show-cursor")
       console.log("Switching back to black rectangle")
     }
   }
